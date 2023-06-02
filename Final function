@@ -1,0 +1,228 @@
+import numpy as np
+import cv2
+import matplotlib.pyplot as plt
+from skimage.io import imread, imshow
+from skimage.color import rgb2gray
+from skimage.feature import match_template, peak_local_max
+from skimage import transform
+from google.colab.patches import cv2_imshow
+
+#Threshold Funtion
+img_r1 = 'pe_direito1.jpg'
+img_l1 = 'pe_esquerdo1.jpg'
+img_r2 = 'pe_direito2.jpg'
+img_l2 = 'pe_esquerdo2.jpg'
+
+def limiar(limiar,imagem):
+    img = cv2.imread(imagem)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    _, threshold1 = cv2.threshold(img,limiar,255,cv2.THRESH_TOZERO)
+    return threshold1, img 
+
+#Resize Function: this function was not made by me
+
+mascara_r = "foot_mask_right.jpg"
+mascara_l = "foot_mask_left.jpg"
+
+def Redimensionar(mascara_r, mascara_l, foot_r, foot_l):
+  maskR = cv2.imread(mascara_r)
+  maskL = cv2.imread(mascara_l)
+  footr = cv2.imread(foot_r)
+  footl = cv2.imread(foot_l)
+ 
+  wmR = int(maskR.shape[1])
+  hmR = int(maskR.shape[0])
+  dimR = (wmR, hmR)
+
+  wmL = int(maskL.shape[1])
+  hmL = int(maskL.shape[0])
+  dimL = (wmL, hmL)
+
+  wR = int(footr.shape[1])
+  hR = int(footr.shape[0])
+  dimR1 = (wR, hR)
+
+  wL = int(footl.shape[1])
+  hL = int(footl.shape[0])
+  dimL1 = (wL, hL)
+  # resize mask to be on similar size of image to be analysed     
+  maskR1 = cv2.resize(maskR, dimR1, interpolation = cv2.INTER_AREA)
+  maskL1 = cv2.resize(maskL, dimL1, interpolation = cv2.INTER_AREA) 
+  maskR1 = cv2.cvtColor(maskR1, cv2.COLOR_BGR2GRAY)
+  maskL1 = cv2.cvtColor(maskL1, cv2.COLOR_BGR2GRAY)
+  footr = cv2.cvtColor(footr, cv2.COLOR_BGR2GRAY)
+  footl = cv2.cvtColor(footl, cv2.COLOR_BGR2GRAY)
+
+  return maskR1, maskL1
+
+#maskr,maskl = Redimensionar(mascara_r,mascara_l,img_r2,img_l2)
+#maskr1,maskl1 = Redimensionar(mascara_r,mascara_l,img_r1,img_l1)
+
+#Correlation function: this function was no made by me.
+
+def find_template(image, template):
+    result = match_template(image, template, cv2.TM_CCOEFF_NORMED)
+    
+    coor_x, coor_y = np.unravel_index(np.argmax(result),
+                                      result.shape)
+    return coor_x, coor_y, template, result
+
+
+#Function to generate correlation and return the center
+
+def correlação(imagem,mascara):
+  x, y, template, result = find_template(imagem, mascara)
+  img_color = imagem*(result-result.min())
+  t = result+result.min()
+  test1 = apply_threshold_filter(t, 0)
+  test1 = np.where(test1 > 0, 255, test1)
+  test1 = test1.astype(np.uint8)
+
+  # calculates the maximum value of the image
+  min_val, max_val, min_loc, max_loc = cv2.minMaxLoc(img_color)
+
+  # get the coordinates of the maximum value
+  max_x, max_y = max_loc
+  center = []
+  center.extend([max_x, max_y])
+  
+  return img_color, center
+  
+ #Function to draw the image in the selected regions
+ 
+def desenha_img(img, centro, raio):
+  comp = 125
+  comp2 = 4
+  x=centro[0]
+  y=centro[-1]
+  #cor=(0,255,0) #verde
+  espessura=2
+  img_desenhada = cv2.circle(img, centro, raio, 0, 2)
+  img_desenhada = cv2.line(img,(x-comp2,y),\
+                           (x+comp2,y), 0, espessura)
+  img_desenhada = cv2.line(img,(x,y+comp),\
+                           (x,y-comp), 0, espessura)
+  
+  #Defines the regions above and below the center
+  
+  centro_up = (x,y-comp)
+  centro_down = (x,y+comp)
+  img_desenhada = cv2.circle(img, centro_up,\
+                             raio, 0, 2)
+  img_desenhada = cv2.circle(img, centro_down,\
+                             raio, 0, 2)
+  
+  return img_desenhada, centro_up, centro_down
+
+#Function that separates regions of interest
+
+def select_region(img, centro, raio):
+  #Generate masks the size of the image
+  mascara = np.zeros_like(img)
+  #Draws a circle containing the region of interest on the masks
+  cv2.circle(mascara, centro, raio, 255, -1)
+  #Separates the region of images containing the region of masks
+  img_cir = cv2.bitwise_and(img, img, mask=mascara)
+  img_cir=np.array(img_cir)
+  
+  return img_cir
+ 
+ #Function that eliminates values below a threshold value (in this case, to eliminate pixels with a temperature below body temperature).
+ 
+def elimina_valores(img,limite):
+  #mascara = img < limite
+  valores = img[img >= limite]
+    
+  return valores
+  
+  #Temperature function:calculates the mean and median temperature of the regions
+  
+def Temperatura(img,centro,raio):
+  #Desenha as regiões sobre a imagem
+  img_desenhada, centro_up, centro_down = desenha_img(img,centro,raio)
+
+  #Selection of the region of interest in the image
+  img_cir = select_region(img,centro,raio)
+  img_cir_up = select_region(img,centro_up,raio)
+  img_cir_down = select_region(img,centro_down,raio)
+
+  #Eliminates values below body temperature
+  img_lim = elimina_valores(img_cir,20)
+  img_lim_up = elimina_valores(img_cir_up,20)
+  img_lim_down = elimina_valores(img_cir_down,20)
+  
+  valores = []
+  #Calculates the mean and median
+  media = np.mean(img_lim)
+  mediana = np.median(img_lim)
+  media_up = np.mean(img_lim_up)
+  mediana_up = np.median(img_lim_up)
+  media_down = np.mean(img_lim_down)
+  mediana_down = np.median(img_lim_down)
+  valores.extend([media,mediana, media_up,mediana_up, media_down, mediana_down])
+  return valores,img_desenhada
+  
+  ### MAIN FUNCTION: It receives two images (right foot and left foot) and returns the temperature differences of the 3 regions (center, top and bottom)
+  #between the left and right foot.
+  
+  #Main function without mask resize
+def analise_feet1(r_foot, l_foot):
+  #Lê as imagens
+  img_r = cv2.imread(r_foot)
+  img_l = cv2.imread(l_foot) 
+  img_r = cv2.cvtColor(img_r, cv2.COLOR_BGR2GRAY)
+  img_l = cv2.cvtColor(img_l, cv2.COLOR_BGR2GRAY)
+  #Imagem com limiar 80
+  _, img_lr = cv2.threshold(img_r,80,255,cv2.THRESH_TOZERO)
+  _, img_ll = cv2.threshold(img_l,80,255,cv2.THRESH_TOZERO)
+  #Máscara em tamanho original
+  maskR = cv2.imread('foot_mask_right.jpg')
+  maskL = cv2.imread('foot_mask_left.jpg')
+  maskr = cv2.cvtColor(maskR, cv2.COLOR_BGR2GRAY)
+  maskl = cv2.cvtColor(maskL, cv2.COLOR_BGR2GRAY)
+  #Correlação
+  img_cor_r, center_r = correlação(img_lr, maskr)
+  img_cor_l, center_l = correlação(img_ll, maskl)
+  #Desenha a imagem, seleciona as regiões, elimina os valores\
+  # abaixo da temperatura corporal (20), e calcula a média e a mediana
+  medias_r, img_dr = Temperatura(img_lr,center_r,40)
+  medias_l, img_dl = Temperatura(img_ll,center_l,40)
+  cv2_imshow(img_dr)
+  cv2_imshow(img_dl)  
+  #diferenças
+  dif_list = []
+  for i,j in zip(medias_r,medias_l):
+    dif = abs(i - j)
+    dif_list.append(dif)
+    
+  return medias_r, medias_l, dif_list
+
+#Main funtion with mask resize
+
+def analise_feet2(r_foot, l_foot):
+  #Lê as imagens
+  img_r = cv2.imread(r_foot)
+  img_l = cv2.imread(l_foot) 
+  img_r = cv2.cvtColor(img_r, cv2.COLOR_BGR2GRAY)
+  img_l = cv2.cvtColor(img_l, cv2.COLOR_BGR2GRAY)
+  #Imagem com limiar 80
+  _, img_lr = cv2.threshold(img_r,80,255,cv2.THRESH_TOZERO)
+  _, img_ll = cv2.threshold(img_l,80,255,cv2.THRESH_TOZERO)
+  #Máscara
+  maskr, maskl = Redimensionar(mascara_r, mascara_l, r_foot, l_foot)
+  #correlação
+  img_cor_r, center_r = correlação(img_lr, maskr)
+  img_cor_l, center_l = correlação(img_ll, maskl)
+  #Desenha a imagem, seleciona as regiões, elimina os valores\
+  # abaixo da temperatura corporal (20), e calcula a média e a mediana
+  medias_r, img_dr = Temperatura(img_lr,center_r,40)
+  medias_l, img_dl = Temperatura(img_ll,center_l,40)
+  #cv2_imshow(img_dr)
+  #cv2_imshow(img_dl)  
+  #differences
+  dif_list = []
+  for i,j in zip(medias_r,medias_l):
+    dif = abs(i - j)
+    dif_list.append(dif)
+    
+  return medias_r, medias_l, dif_list
